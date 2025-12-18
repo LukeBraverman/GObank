@@ -7,23 +7,74 @@ import (
 )
 
 type Handler struct {
-    service *service
+    service *Service
 }
 
 // Constructor
-func NewHandler(service *service) *Handler {
+func NewHandler(service *Service) *Handler {
     return &Handler{
         service: service,
     }
 }
 
-// Route registration
+// RegisterRoutes wires all account-related routes
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
-    r.GET("/accounts/test", h.GetTestAccount)
+    r.POST("/accounts", h.OpenAccount)
+    r.GET("/accounts/:accountNumber", h.GetAccount)
 }
 
-// HTTP handler method
-func (h *Handler) GetTestAccount(c *gin.Context) {
-    account := h.service.GetTestAccount()
-    c.JSON(http.StatusOK, account)
+/*
+   ===== Request DTOs =====
+*/
+
+// OpenAccountRequest represents the JSON payload for opening an account
+type OpenAccountRequest struct {
+    AccountNumber  string  `json:"accountNumber"`
+    Name           string  `json:"name"`
+    InitialBalance float64 `json:"initialBalance"`
+}
+
+/*
+   ===== Handlers =====
+*/
+
+// OpenAccount creates a new account from request data
+func (h *Handler) OpenAccount(c *gin.Context) {
+    var req OpenAccountRequest
+
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "invalid request body",
+        })
+        return
+    }
+
+    acc, err := h.service.OpenAccount(
+        req.AccountNumber,
+        req.Name,
+        req.InitialBalance,
+    )
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(http.StatusCreated, acc)
+}
+
+// GetAccount fetches an account by account number
+func (h *Handler) GetAccount(c *gin.Context) {
+    accountNumber := c.Param("accountNumber")
+
+    acc, err := h.service.GetAccount(accountNumber)
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{
+            "error": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(http.StatusOK, acc)
 }
