@@ -1,0 +1,146 @@
+package ledger
+
+import (
+    "fmt"
+    "time"
+
+    "github.com/google/uuid"
+)
+
+type Service struct {
+    mu   sync.Mutex
+    repo *Repository
+}
+
+func NewService(repo *Repository) *Service {
+    return &Service{
+        repo: repo,
+
+    }
+}
+
+func (s *Service) Transfer(
+    from string,
+    to string,
+    amount float64,
+) error {
+
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if amount <= 0 {
+        return fmt.Errorf("amount must be positive")
+    }
+
+    if from == to {
+        return fmt.Errorf("cannot transfer to same account")
+    }
+
+    if s.Balance(from) < amount {
+        return fmt.Errorf("insufficient funds")
+    }
+
+    txID := uuid.NewString()
+
+    s.repo.Append(Entry{
+        TransactionID: txID,
+        AccountNumber: from,
+        Amount:        -amount,
+        Description:   "transfer to " + to,
+        CreatedAt:     time.Now().UTC(),
+    })
+
+    s.repo.Append(Entry{
+        TransactionID: txID,
+        AccountNumber: to,
+        Amount:        amount,
+        Description:   "transfer from " + from,
+        CreatedAt:     time.Now().UTC(),
+    })
+
+    return nil
+}
+
+
+func (s *Service) Debit(
+    accountNumber string,
+    amount float64,
+    description string,
+) error {
+
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if accountNumber == "" {
+        return fmt.Errorf("account number required")
+    }
+
+    if amount <= 0 {
+        return fmt.Errorf("debit amount must be positive")
+    }
+
+    balance := s.Balance(accountNumber)
+    if balance < amount {
+        return fmt.Errorf("insufficient funds")
+    }
+
+    entry := Entry{
+        TransactionID: uuid.NewString(),
+        AccountNumber: accountNumber,
+        Amount:        -amount,
+        Description:   description,
+        CreatedAt:     time.Now().UTC(),
+    }
+
+    s.repo.Append(entry)
+    return nil
+}
+
+
+func (s *Service) Credit(
+    accountNumber string,
+    amount float64,
+    description string,
+) error {
+
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if accountNumber == "" {
+        return fmt.Errorf("account number required")
+    }
+
+    if amount <= 0 {
+        return fmt.Errorf("credit amount must be positive")
+    }
+
+    entry := Entry{
+        TransactionID: uuid.NewString(),
+        AccountNumber: accountNumber,
+        Amount:        amount,
+        Description:   description,
+        CreatedAt:     time.Now().UTC(),
+    }
+
+    s.repo.Append(entry)
+    return nil
+}
+
+func (s *Service) Balance(accountNumber string) float64 {
+    entries := s.repo.EntriesForAccount(accountNumber)
+
+    var total float64
+    for _, e := range entries {
+        total += e.Amount
+    }
+
+    return total
+}
+
+
+// TESTING
+
+func (s *Service) EntriesForAccount(accountNumber string) []Entry {
+    return s.repo.EntriesForAccount(accountNumber)
+}
+

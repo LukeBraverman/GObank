@@ -1,35 +1,38 @@
 package account
 
-import "fmt"
+import (
+    "fmt"
+
+    "github.com/LukeBraverman/GObank/internal/ledger"
+)
 
 type Service struct {
-    repo *Repository
+    repo   *Repository
+    ledger *ledger.Service
 }
 
-func NewService(repo *Repository) *Service {
+func NewService(
+    repo *Repository,
+    ledgerSvc *ledger.Service,
+) *Service {
     return &Service{
-        repo: repo,
+        repo:   repo,
+        ledger: ledgerSvc,
     }
 }
 
 func (s *Service) OpenAccount(
     accountNumber string,
     name string,
-    initialBalance float64,
 ) (*TokenAccount, error) {
 
     if accountNumber == "" {
         return nil, fmt.Errorf("account number required")
     }
 
-    if initialBalance < 0 {
-        return nil, fmt.Errorf("initial balance cannot be negative")
-    }
-
     acc := &TokenAccount{
         AccountNumber: accountNumber,
         Name:          name,
-        Balance:       initialBalance,
     }
 
     if err := s.repo.CreateAccount(acc); err != nil {
@@ -46,3 +49,61 @@ func (s *Service) GetAccount(accountNumber string) (*TokenAccount, error) {
     }
     return acc, nil
 }
+
+func (s *Service) Transfer(
+    from string,
+    to string,
+    amount float64,
+) error {
+
+    // Account-level validation
+    if _, ok := s.repo.GetAccount(from); !ok {
+        return fmt.Errorf("from account not found")
+    }
+    if _, ok := s.repo.GetAccount(to); !ok {
+        return fmt.Errorf("to account not found")
+    }
+
+    // Delegate money movement to ledger
+    return s.ledger.Transfer(from, to, amount)
+}
+
+func (s *Service) GetLedgerEntries(
+    accountNumber string,
+) ([]ledger.Entry, error) {
+
+    if _, ok := s.repo.GetAccount(accountNumber); !ok {
+        return nil, fmt.Errorf("account not found")
+    }
+
+    return s.ledger.EntriesForAccount(accountNumber), nil
+}
+
+func (s *Service) Withdraw(
+    accountNumber string,
+    amount float64,
+) error {
+
+    // Account-level validation
+    if _, ok := s.repo.GetAccount(accountNumber); !ok {
+        return fmt.Errorf("from account not found")
+    }
+
+    // Delegate money movement to ledger
+    return s.ledger.Debit(accountNumber, amount, "Withdraw")
+}
+
+func (s *Service) Deposit(
+    accountNumber string,
+    amount float64,
+) error {
+
+    // Account-level validation
+    if _, ok := s.repo.GetAccount(accountNumber); !ok {
+        return fmt.Errorf("from account not found")
+    }
+
+    // Delegate money movement to ledger
+    return s.ledger.Credit(accountNumber, amount, "Deposit")
+}
+

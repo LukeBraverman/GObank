@@ -5,6 +5,8 @@ import (
     "net/http"
 
     "github.com/gin-gonic/gin"
+    "github.com/LukeBraverman/GObank/internal/ledger"
+
 )
 
 func main() {
@@ -17,13 +19,20 @@ func main() {
         })
     })
 
+    // --- Ledger creation --
+    ledgerRepo := ledger.NewRepository()
+    
+    ledgerSvc := ledger.NewService(ledgerRepo)
     // --- Account wiring ---
     repo := account.NewRepository()
-    svc := account.NewService(repo)
+    svc := account.NewService(repo, ledgerSvc)
     handler := account.NewHandler(svc)
 
     handler.RegisterRoutes(r)
     // ----------------------
+
+    // svc.OpenAccount("alice","Alice");
+
 
     r.Run(":8081")
 }
