@@ -3,23 +3,27 @@ package ledger
 import (
     "fmt"
     "time"
+    "sync"
 
     "github.com/google/uuid"
 )
 
 type Service struct {
     mu   sync.Mutex
-    repo *Repository
+    repo Repository
+    processed map[string]time.Time
+
 }
 
-func NewService(repo *Repository) *Service {
+func NewService(repo Repository) *Service {
     return &Service{
         repo: repo,
-
+        processed: make(map[string]time.Time),
     }
 }
 
 func (s *Service) Transfer(
+    idempotencyKey string,
     from string,
     to string,
     amount float64,
@@ -28,6 +32,11 @@ func (s *Service) Transfer(
     s.mu.Lock()
     defer s.mu.Unlock()
 
+    // 1️⃣ Idempotency check
+    if _, exists := s.processed[idempotencyKey]; exists {
+        return nil // already applied → no-op
+    }
+    
     if amount <= 0 {
         return fmt.Errorf("amount must be positive")
     }
@@ -63,6 +72,7 @@ func (s *Service) Transfer(
 
 
 func (s *Service) Debit(
+    idempotencyKey string,
     accountNumber string,
     amount float64,
     description string,
@@ -70,6 +80,11 @@ func (s *Service) Debit(
 
     s.mu.Lock()
     defer s.mu.Unlock()
+
+    // 1️⃣ Idempotency check
+    if _, exists := s.processed[idempotencyKey]; exists {
+        return nil // already applied → no-op
+    }
 
     if accountNumber == "" {
         return fmt.Errorf("account number required")
@@ -98,6 +113,7 @@ func (s *Service) Debit(
 
 
 func (s *Service) Credit(
+    idempotencyKey string,
     accountNumber string,
     amount float64,
     description string,
@@ -105,7 +121,11 @@ func (s *Service) Credit(
 
     s.mu.Lock()
     defer s.mu.Unlock()
-
+    // 1️⃣ Idempotency check
+    if _, exists := s.processed[idempotencyKey]; exists {
+        return nil // already applied → no-op
+    }
+     
     if accountNumber == "" {
         return fmt.Errorf("account number required")
     }
@@ -136,9 +156,6 @@ func (s *Service) Balance(accountNumber string) float64 {
 
     return total
 }
-
-
-// TESTING
 
 func (s *Service) EntriesForAccount(accountNumber string) []Entry {
     return s.repo.EntriesForAccount(accountNumber)

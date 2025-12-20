@@ -7,12 +7,12 @@ import (
 )
 
 type Service struct {
-    repo   *Repository
+    repo   Repository
     ledger *ledger.Service
 }
 
 func NewService(
-    repo *Repository,
+    repo Repository,
     ledgerSvc *ledger.Service,
 ) *Service {
     return &Service{
@@ -51,6 +51,7 @@ func (s *Service) GetAccount(accountNumber string) (*TokenAccount, error) {
 }
 
 func (s *Service) Transfer(
+    idempotencyKey string,
     from string,
     to string,
     amount float64,
@@ -65,7 +66,7 @@ func (s *Service) Transfer(
     }
 
     // Delegate money movement to ledger
-    return s.ledger.Transfer(from, to, amount)
+    return s.ledger.Transfer(idempotencyKey, from, to, amount)
 }
 
 func (s *Service) GetLedgerEntries(
@@ -80,6 +81,7 @@ func (s *Service) GetLedgerEntries(
 }
 
 func (s *Service) Withdraw(
+    idempotencyKey string,
     accountNumber string,
     amount float64,
 ) error {
@@ -90,10 +92,11 @@ func (s *Service) Withdraw(
     }
 
     // Delegate money movement to ledger
-    return s.ledger.Debit(accountNumber, amount, "Withdraw")
+    return s.ledger.Debit(idempotencyKey,accountNumber, amount, "Withdraw")
 }
 
 func (s *Service) Deposit(
+    idempotencyKey string,
     accountNumber string,
     amount float64,
 ) error {
@@ -104,6 +107,6 @@ func (s *Service) Deposit(
     }
 
     // Delegate money movement to ledger
-    return s.ledger.Credit(accountNumber, amount, "Deposit")
+    return s.ledger.Credit(idempotencyKey,accountNumber, amount, "Deposit")
 }
 

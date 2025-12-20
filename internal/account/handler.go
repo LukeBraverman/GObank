@@ -38,17 +38,20 @@ type OpenAccountRequest struct {
 }
 
 type TransferRequest struct {
-    From   string  `json:"from"`
-    To     string  `json:"to"`
-    Amount float64 `json:"amount"`
+    IdempotencyKey string  `json:"idempotencyKey"`
+    From           string  `json:"from"`
+    To             string  `json:"to"`
+    Amount         float64 `json:"amount"`
 }
 
 type DepositRequest struct {
+    IdempotencyKey  string  `json:"idempotencyKey"`
     AccountNumber   string  `json:"accountNumber"`
     Amount          float64 `json:"amount"`
 }
 
 type WithdrawRequest struct {
+    IdempotencyKey  string  `json:"idempotencyKey"`
     AccountNumber   string  `json:"accountNumber"`
     Amount          float64 `json:"amount"`
 }
@@ -103,6 +106,7 @@ func (h *Handler) Transfer(c *gin.Context) {
     }
 
     if err := h.service.Transfer(
+        req.IdempotencyKey,
         req.From,
         req.To,
         req.Amount,
@@ -135,6 +139,7 @@ func (h *Handler) Withdraw(c *gin.Context) {
     }
 
     err := h.service.Withdraw(
+        req.IdempotencyKey,
         req.AccountNumber,
         req.Amount,
     )
@@ -157,6 +162,7 @@ func (h *Handler) Deposit(c *gin.Context) {
     }
 
     err := h.service.Deposit(
+        req.IdempotencyKey,
         req.AccountNumber,
         req.Amount,
     )

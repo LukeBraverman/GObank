@@ -5,18 +5,18 @@ import (
     "sync"
 )
 
-type Repository struct {
+type InMemoryRepository struct {
     mu       sync.RWMutex
     accounts map[string]*TokenAccount
 }
 
-func NewRepository() *Repository {
-    return &Repository{
+func NewRepository() *InMemoryRepository {
+    return &InMemoryRepository{
         accounts: make(map[string]*TokenAccount),
     }
 }
 
-func (r *Repository) CreateAccount(account *TokenAccount) error {
+func (r *InMemoryRepository) CreateAccount(account *TokenAccount) error {
     r.mu.Lock()
     defer r.mu.Unlock()
 
@@ -28,7 +28,7 @@ func (r *Repository) CreateAccount(account *TokenAccount) error {
     return nil
 }
 
-func (r *Repository) GetAccount(accountNumber string) (*TokenAccount, bool) {
+func (r *InMemoryRepository) GetAccount(accountNumber string) (*TokenAccount, bool) {
     r.mu.RLock()
     defer r.mu.RUnlock()
 
