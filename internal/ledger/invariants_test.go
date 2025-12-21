@@ -1,0 +1,173 @@
+package ledger
+
+import (
+    "testing"
+	"sync"
+	"fmt"
+)
+
+
+
+func TestMoneyIsConserved(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    // Initial state: mint money explicitly
+    err := svc.Credit("init-1","alice", 1000, "initial funding")
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Transfers
+    _ = svc.Transfer("tx-1", "alice", "bob", 200)
+    _ = svc.Transfer("tx-2", "bob", "carol", 50)
+    _ = svc.Transfer("tx-3", "alice", "carol", 100)
+
+    // Sum all entries
+    var total float64
+    for _, e := range repo.AllEntries() {
+        total += e.Amount
+    }
+
+    if total != 1000 {
+        t.Fatalf("money invariant violated: expected 1000, got %f", total)
+    }
+}
+
+func TestIdempotencyKeyAppliedOnce(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("init-1", "alice", 100, "initial")
+
+    key := "dup-123"
+
+    _ = svc.Transfer(key, "alice", "bob", 50)
+    _ = svc.Transfer(key, "alice", "bob", 50) // replay
+
+    if svc.Balance("alice") != 50 {
+        t.Fatalf("expected alice=50, got %f", svc.Balance("alice"))
+    }
+
+    if svc.Balance("bob") != 50 {
+        t.Fatalf("expected bob=50, got %f", svc.Balance("bob"))
+    }
+}
+
+func TestNoNegativeBalances(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("init-1", "alice", 100, "initial")
+
+    err := svc.Transfer("tx-1", "alice", "bob", 200)
+    if err == nil {
+        t.Fatal("expected insufficient funds error")
+    }
+
+    if svc.Balance("alice") < 0 {
+        t.Fatal("negative balance invariant violated")
+    }
+}
+
+func TestTransferIsZeroSum(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("init-1", "alice", 100, "initial")
+    _ = svc.Transfer("tx-1", "alice", "bob", 40)
+
+    var sum float64
+    for _, e := range repo.AllEntries() {
+        if e.IdempotencyKey == "tx-1" {
+            sum += e.Amount
+        }
+    }
+
+    if sum != 0 {
+        t.Fatalf("transfer not zero-sum: got %f", sum)
+    }
+}
+
+func TestDifferentIdempotencyKeysBothApply(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("init-1", "alice", 100, "initial")
+
+    _ = svc.Transfer("tx-1", "alice", "bob", 30)
+    _ = svc.Transfer("tx-2", "alice", "bob", 30)
+
+    if svc.Balance("alice") != 40 {
+        t.Fatalf("expected alice=40, got %f", svc.Balance("alice"))
+    }
+
+    if svc.Balance("bob") != 60 {
+        t.Fatalf("expected bob=60, got %f", svc.Balance("bob"))
+    }
+}
+
+func TestTransferCreatesExactlyTwoEntries(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("init-1", "alice", 100, "initial")
+    _ = svc.Transfer("tx-1", "alice", "bob", 40)
+
+    count := 0
+    for _, e := range repo.AllEntries() {
+        if e.IdempotencyKey == "tx-1" {
+            count++
+        }
+    }
+
+    if count != 2 {
+        t.Fatalf("expected 2 entries, got %d", count)
+    }
+}
+
+func TestCreditIncreasesTotalMoney(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("c-1", "alice", 100, "credit")
+
+    var total float64
+    for _, e := range repo.AllEntries() {
+        total += e.Amount
+    }
+
+    if total != 100 {
+        t.Fatalf("expected total=100, got %f", total)
+    }
+}
+
+func TestConcurrentTransfers(t *testing.T) {
+    repo := NewRepository()
+    svc := NewService(repo)
+
+    _ = svc.Credit("init-1", "alice", 1000, "initial")
+
+    var wg sync.WaitGroup
+    for i := 0; i < 50; i++ {
+        wg.Add(1)
+        go func(i int) {
+            defer wg.Done()
+            _ = svc.Transfer(
+                fmt.Sprintf("tx-%d", i),
+                "alice",
+                "bob",
+                10,
+            )
+        }(i)
+    }
+    wg.Wait()
+
+    if svc.Balance("alice") != 500 {
+        t.Fatalf("expected alice=500, got %f", svc.Balance("alice"))
+    }
+
+    if svc.Balance("bob") != 500 {
+        t.Fatalf("expected bob=500, got %f", svc.Balance("bob"))
+    }
+}

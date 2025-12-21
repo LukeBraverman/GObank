@@ -53,6 +53,7 @@ func (s *Service) Transfer(
 
     s.repo.Append(Entry{
         TransactionID: txID,
+        IdempotencyKey: idempotencyKey,
         AccountNumber: from,
         Amount:        -amount,
         Description:   "transfer to " + to,
@@ -61,11 +62,13 @@ func (s *Service) Transfer(
 
     s.repo.Append(Entry{
         TransactionID: txID,
+        IdempotencyKey: idempotencyKey,
         AccountNumber: to,
         Amount:        amount,
         Description:   "transfer from " + from,
         CreatedAt:     time.Now().UTC(),
     })
+    s.processed[idempotencyKey] = time.Now().UTC()
 
     return nil
 }
@@ -101,6 +104,7 @@ func (s *Service) Debit(
 
     entry := Entry{
         TransactionID: uuid.NewString(),
+        IdempotencyKey: idempotencyKey,
         AccountNumber: accountNumber,
         Amount:        -amount,
         Description:   description,
@@ -108,6 +112,7 @@ func (s *Service) Debit(
     }
 
     s.repo.Append(entry)
+    s.processed[idempotencyKey] = time.Now().UTC()
     return nil
 }
 
@@ -136,6 +141,7 @@ func (s *Service) Credit(
 
     entry := Entry{
         TransactionID: uuid.NewString(),
+        IdempotencyKey: idempotencyKey,
         AccountNumber: accountNumber,
         Amount:        amount,
         Description:   description,
@@ -143,6 +149,7 @@ func (s *Service) Credit(
     }
 
     s.repo.Append(entry)
+    s.processed[idempotencyKey] = time.Now().UTC()
     return nil
 }
 

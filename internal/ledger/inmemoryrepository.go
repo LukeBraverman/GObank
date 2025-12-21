@@ -29,3 +29,14 @@ func (r *InMemoryRepository) EntriesForAccount(accountNumber string) []Entry {
     }
     return result
 }
+
+func (r *InMemoryRepository) AllEntries() []Entry {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+
+    // return a copy to avoid mutation
+    entries := make([]Entry, len(r.entries))
+    copy(entries, r.entries)
+    return entries
+}
+
