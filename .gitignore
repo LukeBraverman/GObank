@@ -1,0 +1,6 @@
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+ledger.db
+command/server/ledger.db

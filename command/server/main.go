@@ -20,8 +20,11 @@ func main() {
     })
 
     // --- Ledger creation --
-    ledgerRepo := ledger.NewRepository()
-    
+    //ledgerRepo := ledger.NewRepository()
+    ledgerRepo, err := ledger.NewSQLiteRepository("ledger.db")
+    if err != nil {
+        panic(err) // or log.Fatal(err)
+    }
     ledgerSvc := ledger.NewService(ledgerRepo)
     // --- Account wiring ---
     repo := account.NewRepository()

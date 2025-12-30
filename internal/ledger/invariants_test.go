@@ -9,7 +9,7 @@ import (
 
 
 func TestMoneyIsConserved(t *testing.T) {
-    repo := NewRepository()
+    repo, _ := NewSQLiteRepository(":memory:")
     svc := NewService(repo)
 
     // Initial state: mint money explicitly
