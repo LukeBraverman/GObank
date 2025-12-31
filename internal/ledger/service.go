@@ -9,17 +9,11 @@ import (
 )
 
 type Service struct {
-    mu   sync.Mutex
     repo Repository
-    processed map[string]time.Time
-
 }
 
 func NewService(repo Repository) *Service {
-    return &Service{
-        repo: repo,
-        processed: make(map[string]time.Time),
-    }
+    return &Service{repo: repo}
 }
 
 func (s *Service) Transfer(
@@ -29,48 +23,59 @@ func (s *Service) Transfer(
     amount float64,
 ) error {
 
-    s.mu.Lock()
-    defer s.mu.Unlock()
-
-    // 1️⃣ Idempotency check
-    if _, exists := s.processed[idempotencyKey]; exists {
-        return nil // already applied → no-op
-    }
-    
     if amount <= 0 {
         return fmt.Errorf("amount must be positive")
     }
-
     if from == to {
         return fmt.Errorf("cannot transfer to same account")
     }
 
-    if s.Balance(from) < amount {
-        return fmt.Errorf("insufficient funds")
-    }
+    // TODO Understnad this function signiture. Fix other methids
+    return s.repo.WithTransaction(func(tx TxRepository) error {
 
-    txID := uuid.NewString()
+        // 1️⃣ Idempotency check (DB is source of truth)
+        seen, err := tx.HasIdempotencyKey(idempotencyKey)
+        if err != nil {
+            return err
+        }
+        if seen {
+            return nil
+        }
 
-    s.repo.Append(Entry{
-        TransactionID: txID,
-        IdempotencyKey: idempotencyKey,
-        AccountNumber: from,
-        Amount:        -amount,
-        Description:   "transfer to " + to,
-        CreatedAt:     time.Now().UTC(),
+        // 2️⃣ Balance check (still safe — snapshot read)
+        if s.Balance(from) < amount {
+            return fmt.Errorf("insufficient funds")
+        }
+
+        txID := uuid.NewString()
+        now := time.Now().UTC()
+
+        // 3️⃣ Ledger entries
+        if err := tx.AppendEntry(Entry{
+            TransactionID:  txID,
+            IdempotencyKey: idempotencyKey,
+            AccountNumber:  from,
+            Amount:         -amount,
+            Description:    "transfer to " + to,
+            CreatedAt:      now,
+        }); err != nil {
+            return err
+        }
+
+        if err := tx.AppendEntry(Entry{
+            TransactionID:  txID,
+            IdempotencyKey: idempotencyKey,
+            AccountNumber:  to,
+            Amount:         amount,
+            Description:    "transfer from " + from,
+            CreatedAt:      now,
+        }); err != nil {
+            return err
+        }
+
+        // 4️⃣ Record idempotency key LAST
+        return tx.RecordIdempotencyKey(idempotencyKey)
     })
-
-    s.repo.Append(Entry{
-        TransactionID: txID,
-        IdempotencyKey: idempotencyKey,
-        AccountNumber: to,
-        Amount:        amount,
-        Description:   "transfer from " + from,
-        CreatedAt:     time.Now().UTC(),
-    })
-    s.processed[idempotencyKey] = time.Now().UTC()
-
-    return nil
 }
 
 
