@@ -3,7 +3,6 @@ package ledger
 import (
     "fmt"
     "time"
-    "sync"
 
     "github.com/google/uuid"
 )
@@ -42,8 +41,15 @@ func (s *Service) Transfer(
             return nil
         }
 
-        // 2️⃣ Balance check (still safe — snapshot read)
-        if s.Balance(from) < amount {
+       balance, err := tx.Balance(from)
+        if err != nil {
+            return err
+        }
+        if balance < amount {
+            return fmt.Errorf("insufficient funds")
+        }
+
+        if balance < amount {
             return fmt.Errorf("insufficient funds")
         }
 
@@ -78,7 +84,6 @@ func (s *Service) Transfer(
     })
 }
 
-
 func (s *Service) Debit(
     idempotencyKey string,
     accountNumber string,
@@ -86,40 +91,54 @@ func (s *Service) Debit(
     description string,
 ) error {
 
-    s.mu.Lock()
-    defer s.mu.Unlock()
-
-    // 1️⃣ Idempotency check
-    if _, exists := s.processed[idempotencyKey]; exists {
-        return nil // already applied → no-op
-    }
-
     if accountNumber == "" {
         return fmt.Errorf("account number required")
     }
-
     if amount <= 0 {
         return fmt.Errorf("debit amount must be positive")
     }
 
-    balance := s.Balance(accountNumber)
-    if balance < amount {
-        return fmt.Errorf("insufficient funds")
-    }
+    return s.repo.WithTransaction(func(tx TxRepository) error {
 
-    entry := Entry{
-        TransactionID: uuid.NewString(),
-        IdempotencyKey: idempotencyKey,
-        AccountNumber: accountNumber,
-        Amount:        -amount,
-        Description:   description,
-        CreatedAt:     time.Now().UTC(),
-    }
+        // 1️⃣ Idempotency check
+        seen, err := tx.HasIdempotencyKey(idempotencyKey)
+        if err != nil {
+            return err
+        }
+        if seen {
+            return nil
+        }
 
-    s.repo.Append(entry)
-    s.processed[idempotencyKey] = time.Now().UTC()
-    return nil
+        // 2️⃣ Balance check (same caveat as Transfer)
+     balance, err := tx.Balance(accountNumber)
+        if err != nil {
+            return err
+        }
+        if balance < amount {
+            return fmt.Errorf("insufficient funds")
+        }
+
+        if balance < amount {
+            return fmt.Errorf("insufficient funds")
+        }
+
+        // 3️⃣ Append ledger entry
+        if err := tx.AppendEntry(Entry{
+            TransactionID:  uuid.NewString(),
+            IdempotencyKey: idempotencyKey,
+            AccountNumber:  accountNumber,
+            Amount:         -amount,
+            Description:    description,
+            CreatedAt:      time.Now().UTC(),
+        }); err != nil {
+            return err
+        }
+
+        // 4️⃣ Record idempotency key LAST
+        return tx.RecordIdempotencyKey(idempotencyKey)
+    })
 }
+
 
 
 func (s *Service) Credit(
@@ -129,33 +148,39 @@ func (s *Service) Credit(
     description string,
 ) error {
 
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    // 1️⃣ Idempotency check
-    if _, exists := s.processed[idempotencyKey]; exists {
-        return nil // already applied → no-op
-    }
-     
     if accountNumber == "" {
         return fmt.Errorf("account number required")
     }
-
     if amount <= 0 {
         return fmt.Errorf("credit amount must be positive")
     }
 
-    entry := Entry{
-        TransactionID: uuid.NewString(),
-        IdempotencyKey: idempotencyKey,
-        AccountNumber: accountNumber,
-        Amount:        amount,
-        Description:   description,
-        CreatedAt:     time.Now().UTC(),
-    }
+    return s.repo.WithTransaction(func(tx TxRepository) error {
 
-    s.repo.Append(entry)
-    s.processed[idempotencyKey] = time.Now().UTC()
-    return nil
+        // 1️⃣ Idempotency check
+        seen, err := tx.HasIdempotencyKey(idempotencyKey)
+        if err != nil {
+            return err
+        }
+        if seen {
+            return nil
+        }
+
+        // 2️⃣ Append ledger entry
+        if err := tx.AppendEntry(Entry{
+            TransactionID:  uuid.NewString(),
+            IdempotencyKey: idempotencyKey,
+            AccountNumber:  accountNumber,
+            Amount:         amount,
+            Description:    description,
+            CreatedAt:      time.Now().UTC(),
+        }); err != nil {
+            return err
+        }
+
+        // 3️⃣ Record idempotency key LAST
+        return tx.RecordIdempotencyKey(idempotencyKey)
+    })
 }
 
 func (s *Service) Balance(accountNumber string) float64 {

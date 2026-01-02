@@ -11,4 +11,5 @@ type TxRepository interface {
     HasIdempotencyKey(key string) (bool, error) 
     RecordIdempotencyKey(key string) error 
     AppendEntry(entry Entry) error
+    Balance(accountNumber string) (float64, error)
  }

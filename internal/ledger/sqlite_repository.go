@@ -1,6 +1,7 @@
 package ledger
 
 import (
+    
     "database/sql"
     "time"
 
@@ -13,20 +14,32 @@ type SQLiteRepository struct {
 }
 
 func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
-    db, err := sql.Open("sqlite3", dbPath)
+    
+    db, err := sql.Open("sqlite3", dbPath+"?_txlock=immediate")
+    
     if err != nil {
         return nil, err
     }
+    // Strongly recommended pragmas
+    db.Exec("PRAGMA journal_mode=WAL;")
+    db.Exec("PRAGMA busy_timeout = 5000;")
 
     schema := `
         CREATE TABLE IF NOT EXISTS ledger_entries (
             transaction_id   TEXT NOT NULL,
             idempotency_key  TEXT NOT NULL,
             account_number   TEXT NOT NULL,
-            amount           REAL NOT NULL,
+            amount           INTEGER NOT NULL CHECK (amount != 0),
             description      TEXT NOT NULL,
-            created_at       TEXT NOT NULL
+            created_at       TEXT NOT NULL,
+            UNIQUE (idempotency_key, account_number)
         );
+
+        CREATE INDEX IF NOT EXISTS idx_ledger_account
+        ON ledger_entries(account_number);
+
+        CREATE INDEX IF NOT EXISTS idx_ledger_idempotency
+        ON ledger_entries(idempotency_key);
 
         CREATE TABLE IF NOT EXISTS idempotency_keys (
             key TEXT PRIMARY KEY,
@@ -46,6 +59,8 @@ func (r *SQLiteRepository) WithTransaction(
 ) error {
 
     tx, err := r.db.Begin()
+
+
     if err != nil {
         return err
     }
@@ -185,6 +200,21 @@ func (r *sqliteTxRepository) RecordIdempotencyKey(key string) error {
         time.Now().UTC().Format(time.RFC3339Nano),
     )
     return err
+}
+
+func (r *sqliteTxRepository) Balance(accountNumber string) (float64, error) {
+    row := r.tx.QueryRow(
+        `
+        SELECT COALESCE(SUM(amount), 0)
+        FROM ledger_entries
+        WHERE account_number = ?
+        `,
+        accountNumber,
+    )
+
+    var balance float64
+    err := row.Scan(&balance)
+    return balance, err
 }
 
 
