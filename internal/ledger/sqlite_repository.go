@@ -1,30 +1,28 @@
 package ledger
 
 import (
-    
-    "database/sql"
-    "time"
+	"database/sql"
+	"time"
 
-    _ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-
 type SQLiteRepository struct {
-    db *sql.DB
+	db *sql.DB
 }
 
 func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
-    
-    db, err := sql.Open("sqlite3", dbPath+"?_txlock=immediate")
-    
-    if err != nil {
-        return nil, err
-    }
-    // Strongly recommended pragmas
-    db.Exec("PRAGMA journal_mode=WAL;")
-    db.Exec("PRAGMA busy_timeout = 5000;")
 
-    schema := `
+	db, err := sql.Open("sqlite3", dbPath+"?_txlock=immediate")
+
+	if err != nil {
+		return nil, err
+	}
+	// Strongly recommended pragmas
+	db.Exec("PRAGMA journal_mode=WAL;")
+	db.Exec("PRAGMA busy_timeout = 5000;")
+
+	schema := `
         CREATE TABLE IF NOT EXISTS ledger_entries (
             transaction_id   TEXT NOT NULL,
             idempotency_key  TEXT NOT NULL,
@@ -47,112 +45,129 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
         );
     `
 
-    if _, err := db.Exec(schema); err != nil {
-        return nil, err
-    }
+	if _, err := db.Exec(schema); err != nil {
+		return nil, err
+	}
 
-    return &SQLiteRepository{db: db}, nil
+	return &SQLiteRepository{db: db}, nil
 }
+
 // TODO: What does this function signiture mean
 func (r *SQLiteRepository) WithTransaction(
-    fn func(TxRepository) error,
+	fn func(TxRepository) error,
 ) error {
 
-    tx, err := r.db.Begin()
+	tx, err := r.db.Begin()
 
+	if err != nil {
+		return err
+	}
 
-    if err != nil {
-        return err
-    }
+	txRepo := &sqliteTxRepository{tx: tx}
 
-    txRepo := &sqliteTxRepository{tx: tx}
+	if err := fn(txRepo); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 
-    if err := fn(txRepo); err != nil {
-        _ = tx.Rollback()
-        return err
-    }
-
-    return tx.Commit()
+	return tx.Commit()
 }
 
-func (r *SQLiteRepository) EntriesForAccount(accountNumber string) []Entry {
-    rows, err := r.db.Query(
-        `
+func (r *SQLiteRepository) EntriesForAccount(accountNumber string) ([]Entry, error) {
+	rows, err := r.db.Query(
+		`
         SELECT transaction_id, idempotency_key, account_number,
                amount, description, created_at
         FROM ledger_entries
         WHERE account_number = ?
         `,
-        accountNumber,
-    )
-    if err != nil {
-        panic(err)
-    }
-    defer rows.Close()
+		accountNumber,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    var entries []Entry
-    for rows.Next() {
-        var e Entry
-        var createdAt string
+	var entries []Entry
+	for rows.Next() {
+		var e Entry
+		var createdAt string
 
-        if err := rows.Scan(
-            &e.TransactionID,
-            &e.IdempotencyKey,
-            &e.AccountNumber,
-            &e.Amount,
-            &e.Description,
-            &createdAt,
-        ); err != nil {
-            panic(err)
-        }
+		if err := rows.Scan(
+			&e.TransactionID,
+			&e.IdempotencyKey,
+			&e.AccountNumber,
+			&e.Amount,
+			&e.Description,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
 
-        e.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-        entries = append(entries, e)
-    }
+		parsedTime, parseErr := time.Parse(time.RFC3339Nano, createdAt)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		e.CreatedAt = parsedTime
+		entries = append(entries, e)
+	}
 
-    return entries
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
 }
 
-func (r *SQLiteRepository) AllEntries() []Entry {
-    rows, err := r.db.Query(`
+func (r *SQLiteRepository) AllEntries() ([]Entry, error) {
+	rows, err := r.db.Query(`
         SELECT transaction_id, idempotency_key, account_number,
                amount, description, created_at
         FROM ledger_entries
     `)
-    if err != nil {
-        panic(err)
-    }
-    defer rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    var entries []Entry
-    for rows.Next() {
-        var e Entry
-        var createdAt string
+	var entries []Entry
+	for rows.Next() {
+		var e Entry
+		var createdAt string
 
-        rows.Scan(
-            &e.TransactionID,
-            &e.IdempotencyKey,
-            &e.AccountNumber,
-            &e.Amount,
-            &e.Description,
-            &createdAt,
-        )
-        e.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-        entries = append(entries, e)
-    }
+		if err := rows.Scan(
+			&e.TransactionID,
+			&e.IdempotencyKey,
+			&e.AccountNumber,
+			&e.Amount,
+			&e.Description,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
 
-    return entries
+		parsedTime, parseErr := time.Parse(time.RFC3339Nano, createdAt)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		e.CreatedAt = parsedTime
+		entries = append(entries, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
 }
-
 
 type sqliteTxRepository struct {
-    tx *sql.Tx
+	tx *sql.Tx
 }
 
-
 func (r *sqliteTxRepository) AppendEntry(entry Entry) error {
-    _, err := r.tx.Exec(
-        `
+	_, err := r.tx.Exec(
+		`
         INSERT INTO ledger_entries (
             transaction_id,
             idempotency_key,
@@ -162,60 +177,57 @@ func (r *sqliteTxRepository) AppendEntry(entry Entry) error {
             created_at
         ) VALUES (?, ?, ?, ?, ?, ?)
         `,
-        entry.TransactionID,
-        entry.IdempotencyKey,
-        entry.AccountNumber,
-        entry.Amount,
-        entry.Description,
-        entry.CreatedAt.UTC().Format(time.RFC3339Nano),
-    )
-    return err
+		entry.TransactionID,
+		entry.IdempotencyKey,
+		entry.AccountNumber,
+		entry.Amount,
+		entry.Description,
+		entry.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
 }
 
 func (r *sqliteTxRepository) HasIdempotencyKey(key string) (bool, error) {
-    row := r.tx.QueryRow(
-        `SELECT 1 FROM idempotency_keys WHERE key = ?`,
-        key,
-    )
+	row := r.tx.QueryRow(
+		`SELECT 1 FROM idempotency_keys WHERE key = ?`,
+		key,
+	)
 
-    var dummy int
-    err := row.Scan(&dummy)
-    if err == sql.ErrNoRows {
-        return false, nil
-    }
-    if err != nil {
-        return false, err
-    }
+	var dummy int
+	err := row.Scan(&dummy)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
 
-    return true, nil
+	return true, nil
 }
 
 func (r *sqliteTxRepository) RecordIdempotencyKey(key string) error {
-    _, err := r.tx.Exec(
-        `
+	_, err := r.tx.Exec(
+		`
         INSERT INTO idempotency_keys (key, created_at)
         VALUES (?, ?)
         `,
-        key,
-        time.Now().UTC().Format(time.RFC3339Nano),
-    )
-    return err
+		key,
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	return err
 }
 
 func (r *sqliteTxRepository) Balance(accountNumber string) (float64, error) {
-    row := r.tx.QueryRow(
-        `
+	row := r.tx.QueryRow(
+		`
         SELECT COALESCE(SUM(amount), 0)
         FROM ledger_entries
         WHERE account_number = ?
         `,
-        accountNumber,
-    )
+		accountNumber,
+	)
 
-    var balance float64
-    err := row.Scan(&balance)
-    return balance, err
+	var balance float64
+	err := row.Scan(&balance)
+	return balance, err
 }
-
-
-

@@ -1,6 +1,6 @@
 package account
 
 type TokenAccount struct {
-    AccountNumber string
-    Name          string
+	AccountNumber string
+	Name          string
 }

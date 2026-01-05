@@ -2,171 +2,182 @@ package ledger
 
 import (
 	"fmt"
-    	"sync"
-        	"testing"
-            )
+	"sync"
+	"testing"
+)
 
-            func TestMoneyIsConserved(t *testing.T) {
-            	repo := NewTestSQLiteRepository(t)
-                	svc := NewService(repo)
+func mustAllEntries(t *testing.T, repo Repository) []Entry {
+	t.Helper()
+	entries, err := repo.AllEntries()
+	if err != nil {
+		t.Fatalf("failed to fetch entries: %v", err)
+	}
+	return entries
+}
 
-                    	// Initial state: mint money explicitly
-                        	err := svc.Credit("init-1", "alice", 1000, "initial funding")
-                            	if err != nil {
-                                		t.Fatal(err)
-                                        	}
+func mustBalance(t *testing.T, svc *Service, account string) float64 {
+	t.Helper()
+	balance, err := svc.Balance(account)
+	if err != nil {
+		t.Fatalf("failed to fetch balance for %s: %v", account, err)
+	}
+	return balance
+}
 
-                                            	// Transfers
-                                                	_ = svc.Transfer("tx-1", "alice", "bob", 200)
-                                                    	_ = svc.Transfer("tx-2", "bob", "carol", 50)
-                                                        	_ = svc.Transfer("tx-3", "alice", "carol", 100)
+func TestMoneyIsConserved(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                            	// Sum all entries
-                                                                	var total float64
-                                                                    	for _, e := range repo.AllEntries() {
-                                                                        		total += e.Amount
-                                                                                	}
+	if err := svc.Credit("init-1", "alice", 1000, "initial funding"); err != nil {
+		t.Fatal(err)
+	}
 
-                                                                                    	if total != 1000 {
-                                                                                        		t.Fatalf("money invariant violated: expected 1000, got %f", total)
-                                                                                                	}
-                                                                                                    }
+	_ = svc.Transfer("tx-1", "alice", "bob", 200)
+	_ = svc.Transfer("tx-2", "bob", "carol", 50)
+	_ = svc.Transfer("tx-3", "alice", "carol", 100)
 
-                                                                                                    func TestIdempotencyKeyAppliedOnce(t *testing.T) {
-                                                                                                    	repo := NewTestSQLiteRepository(t)
-                                                                                                        	svc := NewService(repo)
+	var total float64
+	for _, e := range mustAllEntries(t, repo) {
+		total += e.Amount
+	}
 
-                                                                                                            	_ = svc.Credit("init-1", "alice", 100, "initial")
+	if total != 1000 {
+		t.Fatalf("money invariant violated: expected 1000, got %f", total)
+	}
+}
 
-                                                                                                                	key := "dup-123"
+func TestIdempotencyKeyAppliedOnce(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                    	_ = svc.Transfer(key, "alice", "bob", 50)
-                                                                                                                        	_ = svc.Transfer(key, "alice", "bob", 50) // replay
+	_ = svc.Credit("init-1", "alice", 100, "initial")
 
-                                                                                                                            	if svc.Balance("alice") != 50 {
-                                                                                                                                		t.Fatalf("expected alice=50, got %f", svc.Balance("alice"))
-                                                                                                                                        	}
+	key := "dup-123"
+	_ = svc.Transfer(key, "alice", "bob", 50)
+	_ = svc.Transfer(key, "alice", "bob", 50) // replay
 
-                                                                                                                                            	if svc.Balance("bob") != 50 {
-                                                                                                                                                		t.Fatalf("expected bob=50, got %f", svc.Balance("bob"))
-                                                                                                                                                        	}
-                                                                                                                                                            }
+	if mustBalance(t, svc, "alice") != 50 {
+		t.Fatalf("expected alice=50, got %f", mustBalance(t, svc, "alice"))
+	}
 
-                                                                                                                                                            func TestNoNegativeBalances(t *testing.T) {
-                                                                                                                                                            	repo := NewTestSQLiteRepository(t)
-                                                                                                                                                                	svc := NewService(repo)
+	if mustBalance(t, svc, "bob") != 50 {
+		t.Fatalf("expected bob=50, got %f", mustBalance(t, svc, "bob"))
+	}
+}
 
-                                                                                                                                                                    	_ = svc.Credit("init-1", "alice", 100, "initial")
+func TestNoNegativeBalances(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                                                                        	err := svc.Transfer("tx-1", "alice", "bob", 200)
-                                                                                                                                                                            	if err == nil {
-                                                                                                                                                                                		t.Fatal("expected insufficient funds error")
-                                                                                                                                                                                        	}
+	_ = svc.Credit("init-1", "alice", 100, "initial")
 
-                                                                                                                                                                                            	if svc.Balance("alice") < 0 {
-                                                                                                                                                                                                		t.Fatal("negative balance invariant violated")
-                                                                                                                                                                                                        	}
-                                                                                                                                                                                                            }
+	err := svc.Transfer("tx-1", "alice", "bob", 200)
+	if err == nil {
+		t.Fatal("expected insufficient funds error")
+	}
 
-                                                                                                                                                                                                            func TestTransferIsZeroSum(t *testing.T) {
-                                                                                                                                                                                                            	repo := NewTestSQLiteRepository(t)
-                                                                                                                                                                                                                	svc := NewService(repo)
+	if mustBalance(t, svc, "alice") < 0 {
+		t.Fatal("negative balance invariant violated")
+	}
+}
 
-                                                                                                                                                                                                                    	_ = svc.Credit("init-1", "alice", 100, "initial")
-                                                                                                                                                                                                                        	_ = svc.Transfer("tx-1", "alice", "bob", 40)
+func TestTransferIsZeroSum(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                                                                                                                            	var sum float64
-                                                                                                                                                                                                                                	for _, e := range repo.AllEntries() {
-                                                                                                                                                                                                                                    		if e.IdempotencyKey == "tx-1" {
-                                                                                                                                                                                                                                            			sum += e.Amount
-                                                                                                                                                                                                                                                        		}
-                                                                                                                                                                                                                                                                	}
+	_ = svc.Credit("init-1", "alice", 100, "initial")
+	_ = svc.Transfer("tx-1", "alice", "bob", 40)
 
-                                                                                                                                                                                                                                                                    	if sum != 0 {
-                                                                                                                                                                                                                                                                        		t.Fatalf("transfer not zero-sum: got %f", sum)
-                                                                                                                                                                                                                                                                                	}
-                                                                                                                                                                                                                                                                                    }
+	var sum float64
+	for _, e := range mustAllEntries(t, repo) {
+		if e.IdempotencyKey == "tx-1" {
+			sum += e.Amount
+		}
+	}
 
-                                                                                                                                                                                                                                                                                    func TestDifferentIdempotencyKeysBothApply(t *testing.T) {
-                                                                                                                                                                                                                                                                                    	repo := NewTestSQLiteRepository(t)
-                                                                                                                                                                                                                                                                                        	svc := NewService(repo)
+	if sum != 0 {
+		t.Fatalf("transfer not zero-sum: got %f", sum)
+	}
+}
 
-                                                                                                                                                                                                                                                                                            	_ = svc.Credit("init-1", "alice", 100, "initial")
+func TestDifferentIdempotencyKeysBothApply(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                                                                                                                                                                                                	_ = svc.Transfer("tx-1", "alice", "bob", 30)
-                                                                                                                                                                                                                                                                                                    	_ = svc.Transfer("tx-2", "alice", "bob", 30)
+	_ = svc.Credit("init-1", "alice", 100, "initial")
+	_ = svc.Transfer("tx-1", "alice", "bob", 30)
+	_ = svc.Transfer("tx-2", "alice", "bob", 30)
 
-                                                                                                                                                                                                                                                                                                        	if svc.Balance("alice") != 40 {
-                                                                                                                                                                                                                                                                                                            		t.Fatalf("expected alice=40, got %f", svc.Balance("alice"))
-                                                                                                                                                                                                                                                                                                                    	}
+	if mustBalance(t, svc, "alice") != 40 {
+		t.Fatalf("expected alice=40, got %f", mustBalance(t, svc, "alice"))
+	}
 
-                                                                                                                                                                                                                                                                                                                        	if svc.Balance("bob") != 60 {
-                                                                                                                                                                                                                                                                                                                            		t.Fatalf("expected bob=60, got %f", svc.Balance("bob"))
-                                                                                                                                                                                                                                                                                                                                    	}
-                                                                                                                                                                                                                                                                                                                                        }
+	if mustBalance(t, svc, "bob") != 60 {
+		t.Fatalf("expected bob=60, got %f", mustBalance(t, svc, "bob"))
+	}
+}
 
-                                                                                                                                                                                                                                                                                                                                        func TestTransferCreatesExactlyTwoEntries(t *testing.T) {
-                                                                                                                                                                                                                                                                                                                                        	repo := NewTestSQLiteRepository(t)
-                                                                                                                                                                                                                                                                                                                                            	svc := NewService(repo)
+func TestTransferCreatesExactlyTwoEntries(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                                                                                                                                                                                                                                                	_ = svc.Credit("init-1", "alice", 100, "initial")
-                                                                                                                                                                                                                                                                                                                                                    	_ = svc.Transfer("tx-1", "alice", "bob", 40)
+	_ = svc.Credit("init-1", "alice", 100, "initial")
+	_ = svc.Transfer("tx-1", "alice", "bob", 40)
 
-                                                                                                                                                                                                                                                                                                                                                        	count := 0
-                                                                                                                                                                                                                                                                                                                                                            	for _, e := range repo.AllEntries() {
-                                                                                                                                                                                                                                                                                                                                                                		if e.IdempotencyKey == "tx-1" {
-                                                                                                                                                                                                                                                                                                                                                                        			count++
-                                                                                                                                                                                                                                                                                                                                                                                    		}
-                                                                                                                                                                                                                                                                                                                                                                                            	}
+	count := 0
+	for _, e := range mustAllEntries(t, repo) {
+		if e.IdempotencyKey == "tx-1" {
+			count++
+		}
+	}
 
-                                                                                                                                                                                                                                                                                                                                                                                                	if count != 2 {
-                                                                                                                                                                                                                                                                                                                                                                                                    		t.Fatalf("expected 2 entries, got %d", count)
-                                                                                                                                                                                                                                                                                                                                                                                                            	}
-                                                                                                                                                                                                                                                                                                                                                                                                                }
+	if count != 2 {
+		t.Fatalf("expected 2 entries, got %d", count)
+	}
+}
 
-                                                                                                                                                                                                                                                                                                                                                                                                                func TestCreditIncreasesTotalMoney(t *testing.T) {
-                                                                                                                                                                                                                                                                                                                                                                                                                	repo := NewTestSQLiteRepository(t)
-                                                                                                                                                                                                                                                                                                                                                                                                                    	svc := NewService(repo)
+func TestCreditIncreasesTotalMoney(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                                                                                                                                                                                                                                                                                                                        	_ = svc.Credit("c-1", "alice", 100, "credit")
+	_ = svc.Credit("c-1", "alice", 100, "credit")
 
-                                                                                                                                                                                                                                                                                                                                                                                                                            	var total float64
-                                                                                                                                                                                                                                                                                                                                                                                                                                	for _, e := range repo.AllEntries() {
-                                                                                                                                                                                                                                                                                                                                                                                                                                    		total += e.Amount
-                                                                                                                                                                                                                                                                                                                                                                                                                                            	}
+	var total float64
+	for _, e := range mustAllEntries(t, repo) {
+		total += e.Amount
+	}
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                	if total != 100 {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                    		t.Fatalf("expected total=100, got %f", total)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                            	}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                }
+	if total != 100 {
+		t.Fatalf("expected total=100, got %f", total)
+	}
+}
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                func TestConcurrentTransfers(t *testing.T) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                	repo := NewTestSQLiteRepository(t)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                    	svc := NewService(repo)
+func TestConcurrentTransfers(t *testing.T) {
+	repo := NewTestSQLiteRepository(t)
+	svc := NewService(repo)
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                        	_ = svc.Credit("init-1", "alice", 1000, "initial")
+	_ = svc.Credit("init-1", "alice", 1000, "initial")
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                            	var wg sync.WaitGroup
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                	for i := 0; i < 50; i++ {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    		wg.Add(1)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            		go func(i int) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    			defer wg.Done()
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                			_ = svc.Transfer(
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            				fmt.Sprintf("tx-%d", i),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            				"alice",
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            				"bob",
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            				10,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            			)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        		}(i)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                	}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    	wg.Wait()
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_ = svc.Transfer(
+				fmt.Sprintf("tx-%d", i),
+				"alice",
+				"bob",
+				10,
+			)
+		}(i)
+	}
+	wg.Wait()
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        	if svc.Balance("alice") != 500 {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            		t.Fatalf("expected alice=500, got %f", svc.Balance("alice"))
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    	}
+	if mustBalance(t, svc, "alice") != 500 {
+		t.Fatalf("expected alice=500, got %f", mustBalance(t, svc, "alice"))
+	}
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        	if svc.Balance("bob") != 500 {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            		t.Fatalf("expected bob=500, got %f", svc.Balance("bob"))
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    	}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+	if mustBalance(t, svc, "bob") != 500 {
+		t.Fatalf("expected bob=500, got %f", mustBalance(t, svc, "bob"))
+	}
+}
